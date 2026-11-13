@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Decision Model Bench</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  /* Colors: dataviz reference palette, slots 1-4 for the four setups (validated adjacent,
+     light + dark). LLM-call lines use slots 5 and 7. Text never wears a series color. */
+  :root {
+    color-scheme: light;
+    --bg: #f6f6f4; --panel: #fcfcfb; --ink: #0b0b0b; --ink-2: #52514e; --muted: #6f6e69; --line: #e4e3de;
+    --good: #1a7f37; --bad: #b42318;
+    --c-none: #2a78d6; --c-jev: #eb6834; --c-subq: #1baf7a; --c-gemini_decision: #eda100; --c-mock: #6250d6;
+    --c-carbon: #e87ba4; --c-hydrogen: #6250d6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark;
+      --bg: #121211; --panel: #1a1a19; --ink: #f0efec; --ink-2: #c3c2b7; --muted: #9c9b95; --line: #33332f;
+      --good: #4cc38a; --bad: #ff7b72;
+      --c-none: #3987e5; --c-jev: #d95926; --c-subq: #199e70; --c-gemini_decision: #c98500; --c-mock: #9085e9;
+      --c-carbon: #d55181; --c-hydrogen: #9085e9;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #121211; --panel: #1a1a19; --ink: #f0efec; --ink-2: #c3c2b7; --muted: #9c9b95; --line: #33332f;
+    --good: #4cc38a; --bad: #ff7b72;
+    --c-none: #3987e5; --c-jev: #d95926; --c-subq: #199e70; --c-gemini_decision: #c98500; --c-mock: #9085e9;
+    --c-carbon: #d55181; --c-hydrogen: #9085e9;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 14px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: center; padding: 16px 20px; border-bottom: 1px solid var(--line); }
+  h1 { font-size: 17px; margin: 0; font-weight: 650; }
+  h2 { font-size: 14px; margin: 0 0 10px; font-weight: 650; }
+  .sub { color: var(--ink-2); font-size: 13px; }
+  select { background: var(--panel); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; font: inherit; }
+  main { padding: 16px 20px 40px; max-width: 1440px; margin: 0 auto; }
+  section { margin-top: 16px; }
+  .progress { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 260px; }
+  .bar { height: 8px; background: var(--line); border-radius: 4px; overflow: hidden; flex: 1; min-width: 160px; }
+  .bar > div { height: 100%; background: var(--c-none); width: 0; transition: width .4s; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; overflow-x: auto; }
+  .note { color: var(--muted); font-size: 12px; margin: 6px 0 0; }
+  .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 12px; }
+  .grid3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: 12px; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 4px 0 10px; }
+  .modelrow { display: grid; grid-template-columns: 120px repeat(4, minmax(0, 1fr)); gap: 10px; align-items: stretch; margin-bottom: 10px; }
+  .modelname { display: flex; flex-direction: column; justify-content: center; font-weight: 650; }
+  .modelname .sub { font-weight: 400; }
+  .tile { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; border-top: 4px solid var(--c); }
+  .tile h3 { margin: 0 0 6px; font-size: 13px; font-weight: 650; display: flex; justify-content: space-between; gap: 6px; }
+  .big { font-size: 26px; font-weight: 650; line-height: 1.1; font-variant-numeric: tabular-nums; }
+  .biglabel { color: var(--ink-2); font-size: 12px; margin-bottom: 8px; }
+  .lat { display: grid; grid-template-columns: 1fr auto; gap: 3px 10px; font-size: 13px; font-variant-numeric: tabular-nums; }
+  .lat span:nth-child(odd) { color: var(--ink-2); }
+  .delta { font-size: 12px; margin-left: 4px; }
+  .up { color: var(--good); } .down { color: var(--bad); }
+  canvas { max-height: 280px; }
+  table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+  th, td { padding: 6px 8px; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap; }
+  th.l, td.l { text-align: left; }
+  th { color: var(--ink-2); font-weight: 600; position: sticky; top: 0; background: var(--panel); }
+  .explain td { white-space: normal; text-align: left; vertical-align: top; }
+  .explain td:first-child { font-weight: 600; width: 220px; }
+  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--c); margin-right: 6px; }
+  .empty { color: var(--muted); padding: 40px; text-align: center; }
+  @media (max-width: 760px) {
+    header, main { padding-left: 16px; padding-right: 16px; }
+    .grid2, .grid3 { grid-template-columns: 1fr; }
+    .modelrow { grid-template-columns: 1fr 1fr; }
+    .modelname { grid-column: 1 / -1; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Does a decision model make an AI agent faster and more accurate?</h1>
+    <div class="sub">Gemini 4 Carbon and Gemini 4 Hydrogen, alone vs. with Jev, SubQ Snap or Gemini Decision picking their tools first</div>
+  </div>
+  <div class="progress">
+    <div class="bar"><div id="pbar"></div></div>
+    <span id="ptext" class="sub" style="font-variant-numeric: tabular-nums">–</span>
+  </div>
+  <label class="sub">run <select id="run"></select></label>
+</header>
+<main>
+  <div id="empty" class="empty" hidden>No runs yet. Start one with <code>python -m jevbench run</code>.</div>
+
+  <section class="grid2">
+    <div class="panel"><h2>Decision model response time, live (avg seconds per minute)</h2><canvas id="chDec"></canvas></div>
+    <div class="panel"><h2>Gemini response time, live (avg seconds per minute)</h2><canvas id="chLlm"></canvas></div>
+  </section>
+  <p class="note" id="seriesNote">Live latency comes from Tiger Data (TimescaleDB continuous aggregate) and appears once a run is going.</p>
+
+  <section>
+    <div class="toolbar">
+      <h2 style="margin:0">Results by model</h2>
+      <label class="sub">tool list <select id="fSurf">
+        <option value="all">both sizes</option><option value="small">small (13–32 tools)</option><option value="large">large (~55–100 tools)</option>
+      </select></label>
+      <span class="sub">Bracketed numbers compare with the same Gemini model alone. Green = better.</span>
+    </div>
+    <div id="tiles"></div>
+  </section>
+
+  <section class="grid3">
+    <div class="panel"><h2>Correct (%)</h2><canvas id="chCorrect"></canvas></div>
+    <div class="panel"><h2>Time to first correct tool call (median, s)</h2><canvas id="chTtfctc"></canvas></div>
+    <div class="panel"><h2>Time to first tool call (median, s)</h2><canvas id="chTtftc"></canvas></div>
+  </section>
+
+  <section class="panel">
+    <h2>What the numbers mean</h2>
+    <table class="explain"><tbody>
+      <tr><td>Task attempt</td><td>One benchmark problem, tried once by one setup. Example: "Gemini Carbon + Jev handles one airline customer request."</td></tr>
+      <tr><td>LLM alone</td><td>Gemini gets the whole tool list and decides by itself which tool to use.</td></tr>
+      <tr><td>+ Jev / + SubQ Snap / + Gemini Decision</td><td>A fast "decision model" reads the request first and picks the 3–8 most likely tools (with a "give me more tools" escape hatch). Gemini then only sees those. Everything else stays the same.</td></tr>
+      <tr><td>Small / large tool list</td><td>Small = only the tools that belong to the problem (13–32). Large = padded with tools from other apps (~55–100), the way a real assistant connected to many services looks.</td></tr>
+      <tr><td>Correct</td><td>The benchmark's own grader says the job was done right: τ-bench checks the final database and what the customer was told; MCPToolBench++ checks the tool call against the answer key.</td></tr>
+      <tr><td>Time to first tool call</td><td>How long until the AI takes its first action, right or wrong.</td></tr>
+      <tr><td>Time to first correct tool call</td><td>How long until it takes the right action. This is the wait a user actually feels.</td></tr>
+      <tr><td>Total task time</td><td>All the AI's thinking time for the task (decision model + Gemini). Tool execution and the simulated customer's replies are not counted, so every setup is timed the same way.</td></tr>
+      <tr><td>Live response time charts</td><td>Average time each provider took to answer one call, minute by minute, stored in Tiger Data.</td></tr>
+    </tbody></table>
+  </section>
+
+  <section class="panel">
+    <h2>Full results table</h2>
+    <div class="toolbar">
+      <select id="fBench"><option value="">all benchmarks</option></select>
+      <select id="fLlm"><option value="">both models</option></select>
+    </div>
+    <div style="max-height:520px;overflow:auto"><table id="tbl"></table></div>
+    <p class="note">"vs alone" columns compare with the same problem, model and tool list run without a decision model, counting only pairs where both got to a correct call.</p>
+  </section>
+
+  <section class="panel">
+    <h2>Latest task attempts</h2>
+    <div style="max-height:360px;overflow:auto"><table id="recent"></table></div>
+  </section>
+</main>
+<script>
+const DEC = ["none", "jev", "subq", "gemini_decision", "mock"];
+const SETUP = {none: "LLM alone", jev: "+ Jev", subq: "+ SubQ Snap", gemini_decision: "+ Gemini Decision", mock: "+ mock"};
+const MODEL = {carbon: "Carbon", hydrogen: "Hydrogen", mock: "Mock"};
+const BENCH = {tau: "τ-bench", mcptoolbench: "MCPToolBench++", medagentbench: "MedAgentBench"};
+const SURF = s => s === "native" ? "small" : "large";
+const PROVIDER = {"jev-1.14.0": "Jev", "typesafe/jev-1.14": "Jev", "subq-snap-1.2": "SubQ Snap", "gemini-decision-1": "Gemini Decision",
+                  "gemini-4-carbon": "Carbon", "gemini-4-hydrogen": "Hydrogen"};
+const PCOLOR = {"Jev": "--c-jev", "SubQ Snap": "--c-subq", "Gemini Decision": "--c-gemini_decision", "Carbon": "--c-carbon", "Hydrogen": "--c-hydrogen"};
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const color = d => css(`--c-${d}`) || "#888";
+const sec = v => v == null ? "–" : v.toFixed(1) + " s";
+const pct = v => v == null ? "–" : Math.round(100 * v) + "%";
+const charts = {};
+let selectedRun = new URLSearchParams(location.search).get("run") || "";
+let last = null;
+
+function axisColors() { Chart.defaults.color = css("--ink-2"); Chart.defaults.borderColor = css("--line"); }
+axisColors();
+
+function delta(v, kind) {   // kind: "pct" (higher better) or "sec" (lower better)
+  if (v == null) return "";
+  const better = kind === "pct" ? v > 0 : v < 0;
+  const same = Math.abs(v) < (kind === "pct" ? 0.005 : 0.05);
+  const txt = kind === "pct" ? `${v > 0 ? "+" : ""}${Math.round(100 * v)} pts` : `${v > 0 ? "+" : ""}${v.toFixed(1)} s`;
+  return `<span class="delta ${same ? "" : better ? "up" : "down"}">(${txt})</span>`;
+}
+
+function tiles(view) {
+  const models = [...new Set(view.tiles.map(t => t.llm))];
+  document.getElementById("tiles").innerHTML = models.map(m => {
+    const row = DEC.filter(d => view.tiles.some(t => t.llm === m && t.decision === d)).map(d => {
+      const t = view.tiles.find(x => x.llm === m && x.decision === d);
+      return `<div class="tile" style="--c:${color(d)}">
+        <h3><span>${SETUP[d] || d}</span><span class="sub">${t.n} attempts</span></h3>
+        <div class="big">${pct(t.success_rate)}${delta(t.d_success_rate, "pct")}</div>
+        <div class="biglabel">correct</div>
+        <div class="lat">
+          <span>first tool call</span><span>${sec(t.ttftc_p50)}${delta(t.d_ttftc_p50, "sec")}</span>
+          <span>first correct tool call</span><span>${sec(t.ttfctc_p50)}${delta(t.d_ttfctc_p50, "sec")}</span>
+          <span>total task time</span><span>${sec(t.agent_time_p50)}${delta(t.d_agent_time_p50, "sec")}</span>
+        </div></div>`;
+    }).join("");
+    return `<div class="modelrow"><div class="modelname">Gemini ${MODEL[m] || m}<span class="sub">medians</span></div>${row}</div>`;
+  }).join("");
+}
+
+function bars(id, view, key, fmt, max) {
+  const groups = [...new Set(view.bars.map(b => `${b.bench}|${b.llm}`))];
+  const decs = DEC.filter(d => view.bars.some(b => b.decision === d));
+  const data = {
+    labels: groups.map(g => { const [b, l] = g.split("|"); return [BENCH[b] || b, MODEL[l] || l]; }),
+    datasets: decs.map(d => ({
+      label: SETUP[d] || d, backgroundColor: color(d), borderRadius: 4, borderSkipped: "bottom",
+      borderColor: css("--panel"), borderWidth: 1,
+      data: groups.map(g => { const [b, l] = g.split("|"); const x = view.bars.find(r => r.bench === b && r.llm === l && r.decision === d); return x ? x[key] : null; }),
+    })),
+  };
+  const opts = {responsive: true, animation: false, categoryPercentage: 0.8, barPercentage: 0.9,
+    plugins: {legend: {position: "bottom", labels: {boxWidth: 12}}, tooltip: {callbacks: {label: c => `${c.dataset.label}: ${fmt(c.raw)}`}}},
+    scales: {y: {beginAtZero: true, max, grid: {color: css("--line")}, ticks: {callback: v => key === "success_rate" ? Math.round(v * 100) + "%" : v}},
+             x: {grid: {display: false}}}};
+  if (charts[id]) { charts[id].data = data; charts[id].options = opts; charts[id].update(); }
+  else charts[id] = new Chart(document.getElementById(id), {type: "bar", data, options: opts});
+}
+
+function lines(id, pts) {
+  const series = [...new Set(pts.map(p => PROVIDER[p.provider] || p.provider))];
+  const labels = [...new Set(pts.map(p => p.bucket))].sort();
+  const data = {labels: labels.map(l => l.slice(11, 16)), datasets: series.map(s => ({
+    label: s, borderColor: css(PCOLOR[s] || "--muted"), backgroundColor: css(PCOLOR[s] || "--muted"),
+    borderWidth: 2, pointRadius: 4, pointHoverRadius: 6, spanGaps: true, tension: 0.2,
+    data: labels.map(l => { const xs = pts.filter(p => p.bucket === l && (PROVIDER[p.provider] || p.provider) === s);
+      if (!xs.length) return null; const n = xs.reduce((a, p) => a + p.n, 0); return xs.reduce((a, p) => a + p.avg_s * p.n, 0) / n; }),
+  }))};
+  const opts = {responsive: true, animation: false, interaction: {mode: "index", intersect: false},
+    plugins: {legend: {position: "bottom", labels: {boxWidth: 12}}, tooltip: {callbacks: {label: c => `${c.dataset.label}: ${c.raw == null ? "–" : c.raw.toFixed(2) + " s"}`}}},
+    scales: {y: {beginAtZero: true, grid: {color: css("--line")}, title: {display: true, text: "seconds"}}, x: {grid: {display: false}}}};
+  if (charts[id]) { charts[id].data = data; charts[id].update(); }
+  else charts[id] = new Chart(document.getElementById(id), {type: "line", data, options: opts});
+}
+
+function fillSelect(id, values, label) {
+  const sel = document.getElementById(id), cur = sel.value;
+  sel.innerHTML = sel.options[0].outerHTML + values.map(v => `<option value="${v}" ${v === cur ? "selected" : ""}>${label(v)}</option>`).join("");
+}
+
+function table(s) {
+  const fb = document.getElementById("fBench").value, fl = document.getElementById("fLlm").value;
+  const rows = s.table.filter(r => (!fb || r.bench === fb) && (!fl || r.llm === fl));
+  const signed = (v, f) => v == null ? "–" : (v > 0 ? "+" : "") + f(v);
+  const cols = [
+    ["benchmark", r => BENCH[r.bench] || r.bench, "l"], ["model", r => MODEL[r.llm] || r.llm, "l"],
+    ["setup", r => `<span class="dot" style="--c:${color(r.decision)}"></span>${SETUP[r.decision] || r.decision}`, "l"],
+    ["tool list", r => SURF(r.surface), "l"], ["attempts", r => r.n],
+    ["correct", r => pct(r.success_rate)], ["correct vs alone", r => signed(r.d_success, v => Math.round(100 * v) + " pts")],
+    ["first tool call", r => sec(r.ttftc_p50)], ["first correct call", r => sec(r.ttfctc_p50)],
+    ["first correct (slowest 5%)", r => sec(r.ttfctc_p95)], ["first correct vs alone", r => signed(r.d_ttfctc_p50, v => v.toFixed(1) + " s")],
+    ["total task time", r => sec(r.agent_time_p50)], ["decision model time", r => r.decision_time_p50 == null ? "–" : Math.round(1000 * r.decision_time_p50) + " ms"],
+    ["Gemini first byte", r => sec(r.first_byte_p50)], ["wrong calls first", r => r.calls_before_correct == null ? "–" : r.calls_before_correct.toFixed(1)],
+    ["right tool shortlisted", r => pct(r.shortlist_recall)], ["tools shortlisted", r => r.shortlist_size == null ? "–" : r.shortlist_size.toFixed(1)],
+    ["asked for more tools", r => pct(r.hatch_rate)], ["errors", r => r.errors],
+  ];
+  document.getElementById("tbl").innerHTML = `<tr>${cols.map(c => `<th class="${c[2] || ""}">${c[0]}</th>`).join("")}</tr>` +
+    rows.map(r => `<tr>${cols.map(c => `<td class="${c[2] || ""}">${c[1](r)}</td>`).join("")}</tr>`).join("");
+}
+
+function recent(s) {
+  document.getElementById("recent").innerHTML =
+    `<tr><th class="l">benchmark</th><th class="l">problem</th><th class="l">model</th><th class="l">setup</th><th class="l">tool list</th><th>correct</th><th>first tool call</th><th>first correct call</th><th>total task time</th></tr>` +
+    s.recent.map(r => `<tr><td class="l">${BENCH[r.bench] || r.bench}</td><td class="l">${(r.task_id || "").slice(0, 24)}</td>
+      <td class="l">${MODEL[r.llm] || r.llm}</td><td class="l"><span class="dot" style="--c:${color(r.decision)}"></span>${SETUP[r.decision] || r.decision}</td>
+      <td class="l">${SURF(r.surface)}</td>
+      <td>${r.error ? '<span class="down">error</span>' : r.score == null ? "–" : r.score >= 0.999 ? "yes" : "no"}</td>
+      <td>${sec(r.ttftc_s)}</td><td>${sec(r.ttfctc_s)}</td><td>${sec(r.agent_time_s)}</td></tr>`).join("");
+}
+
+function render(s) {
+  const view = s.views[document.getElementById("fSurf").value] || s.views.all;
+  tiles(view);
+  bars("chCorrect", view, "success_rate", pct, 1);
+  bars("chTtfctc", view, "ttfctc_p50", sec);
+  bars("chTtftc", view, "ttftc_p50", sec);
+  table(s); recent(s);
+}
+
+async function tick() {
+  try {
+    const r = await fetch(`api/summary${selectedRun ? `?run=${encodeURIComponent(selectedRun)}` : ""}`);
+    const s = await r.json();
+    last = s;
+    document.getElementById("empty").hidden = !!s.run;
+    if (!s.run) return;
+    document.getElementById("run").innerHTML = s.runs.map(x =>
+      `<option value="${x.run_id}" ${x.run_id === s.run ? "selected" : ""}>${x.run_id}${x.state ? " · " + x.state.split(":")[0] : ""}</option>`).join("");
+    const done = s.planned ? Math.min(100, 100 * s.done / s.planned) : 0;
+    document.getElementById("pbar").style.width = done + "%";
+    document.getElementById("ptext").textContent =
+      `${s.done}${s.planned ? " / " + s.planned : ""} task attempts${s.errors ? ` · ${s.errors} errors` : ""}${s.state ? " · " + s.state.split(":")[0] : ""}`;
+    const pts = s.latency_series || [];
+    document.getElementById("seriesNote").hidden = pts.length > 0;
+    lines("chDec", pts.filter(p => p.kind === "decision"));
+    lines("chLlm", pts.filter(p => p.kind === "llm"));
+    fillSelect("fBench", [...new Set(s.table.map(r => r.bench))], v => BENCH[v] || v);
+    fillSelect("fLlm", [...new Set(s.table.map(r => r.llm))], v => MODEL[v] || v);
+    render(s);
+  } catch (e) { document.getElementById("ptext").textContent = "dashboard error: " + e; }
+}
+document.getElementById("run").addEventListener("change", e => { selectedRun = e.target.value; history.replaceState(null, "", `?run=${selectedRun}`); tick(); });
+["fSurf", "fBench", "fLlm"].forEach(id => document.getElementById(id).addEventListener("change", () => last && render(last)));
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { axisColors(); Object.values(charts).forEach(c => c.destroy()); for (const k in charts) delete charts[k]; last && tick(); });
+tick();
+setInterval(tick, 3000);
+</script>
+</body>
+</html>

@@ -1,0 +1,80 @@
+# The whole experiment in one file. `python -m jevbench run` runs every cell:
+#   benchmarks x tasks x tool surfaces x LLMs x decision models x reps
+# shuffled with `seed`, all at once, streaming results to the dashboard.
+
+run:
+  seed: 13
+  reps: 1
+  max_workers: 8            # episodes in flight at once
+  max_turns: 8              # agent turns per episode (MedAgentBench, MCPToolBench++)
+  budget_usd: ${BUDGET_USD:150}
+
+# The agent LLMs (the thing being helped). thinking_level is sent as-is;
+# set it to null to omit it.
+llms:
+  - id: carbon
+    model: gemini-4-carbon
+    thinking_level: low
+  - id: hydrogen
+    model: gemini-4-hydrogen
+    thinking_level: low
+
+# "none" = LLM by itself (sees every tool). The others put a decision model in
+# front: it picks a tool shortlist, then the same LLM runs with only those tools.
+decision_models: [none, jev, subq, gemini_decision]
+
+decision_providers:
+  jev:
+    model: typesafe/jev-1.14
+  subq:
+    model: subq-snap-1.2
+  gemini_decision:
+    model: gemini-decision-1
+
+router:
+  mass: 0.95          # keep tools until their probabilities add up to this...
+  min_k: 3            # ...but never fewer than this
+  max_k: 8            # ...and never more than this
+  escape_hatch: true  # give the LLM a request_more_tools tool (reloads the full list)
+  max_options: 255    # decision-model cap on choice options; above it, route by group first
+
+benchmarks:
+  mcptoolbench:
+    enabled: true
+    categories: [finance, file_system, browser, search, map, pay]
+    per_category: 5
+    # native = the item's own tools; all = every MCPToolBench++ tool (~87)
+    surfaces: [native, all]
+    judge: true        # LLM judge for fuzzy parameter matches, as the benchmark does
+
+  medagentbench:
+    enabled: true
+    per_task_type: 3   # 10 task types -> 30 tasks
+    # native = the 9 FHIR functions + finish; pad100 = padded to ~100 with other tools
+    surfaces: [native, pad100]
+
+  tau:
+    enabled: true
+    domains: [airline, retail, telecom]   # banking_knowledge needs `--extra knowledge`
+    split: test
+    per_domain: 5        # tau episodes are long conversations; raise once a run fits your clock/budget
+    # native = the domain's own tools (13-16); all_domains = every tau domain's tools (39);
+    # pad100 = all_domains plus MCPToolBench++ tools up to 100 (all extras are non-executable)
+    surfaces: [native, pad100]
+    max_steps: 60
+    user_llm: gemini/gemini-3.8-flash     # LiteLLM id; fixed across all conditions
+    judge_llm: gemini/gemini-3.8-flash    # replaces tau's OpenAI judges; null = keep tau's
+
+# Judge for MCPToolBench++ fuzzy parameter checks (never on the latency clock).
+judge_llm: gemini-3.8-flash
+
+# USD per 1M tokens. Check before a big run; these were read on 2026-11-13.
+prices:
+  gemini-4-carbon:   {input: 2.00, output: 10.00}
+  gemini-4-hydrogen: {input: 1.50, output: 7.50}
+  gemini-3.8-flash:  {input: 0.75, output: 3.75}
+  typesafe/jev-1.14: {input: 0.042, output: 0}
+  jev-1.14.0:        {input: 0.042, output: 0}
+  subq-snap-1.2:     {input: 0.04, output: 0}
+  gemini-decision-1: {input: 0.10, output: 0}
+  mock:              {input: 0, output: 0}

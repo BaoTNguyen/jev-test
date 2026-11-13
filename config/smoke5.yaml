@@ -1,0 +1,32 @@
+# Slide smoke run: 5 problems per benchmark, every setup, both tool-list sizes.
+#   2 benchmarks x 5 problems x 2 tool lists x 2 models x 4 setups = 160 task attempts
+# python -m jevbench --config config/smoke5.yaml run --name smoke
+run: {seed: 21, reps: 1, max_workers: 4, max_turns: 8, budget_usd: 25}
+llms:
+  - {id: carbon, model: gemini-4-carbon, thinking_level: low}
+  - {id: hydrogen, model: gemini-4-hydrogen, thinking_level: low}
+decision_models: [none, jev, subq, gemini_decision]
+decision_providers:
+  jev: {model: typesafe/jev-1.14}
+  subq: {model: subq-snap-1.2}
+  gemini_decision: {model: gemini-decision-1}
+router: {mass: 0.95, min_k: 3, max_k: 8, escape_hatch: true, max_options: 255}
+benchmarks:
+  # 5 problems: one each from finance, payments, maps, search, files
+  mcptoolbench: {enabled: true, categories: [finance, pay, map, search, file_system], per_category: 1,
+                 surfaces: [native, all], judge: true}
+  # 5 problems: 2 airline, 2 retail, 1 telecom
+  tau: {enabled: true, domains: [airline, retail, telecom], split: test,
+        per_domain: {airline: 2, retail: 2, telecom: 1}, surfaces: [native, pad100], max_steps: 40,
+        user_llm: gemini/gemini-3.8-flash, judge_llm: gemini/gemini-3.8-flash}
+  # needs Docker (FHIR server) + refsol.py: run on the droplet
+  medagentbench: {enabled: false, per_task_type: 1, surfaces: [native, pad100]}
+judge_llm: gemini-3.8-flash
+prices:
+  gemini-4-carbon:   {input: 2.00, output: 10.00}
+  gemini-4-hydrogen: {input: 1.50, output: 7.50}
+  gemini-3.8-flash:  {input: 0.75, output: 3.75}
+  jev-1.14.0:        {input: 0.042, output: 0}
+  typesafe/jev-1.14: {input: 0.042, output: 0}
+  subq-snap-1.2:     {input: 0.04, output: 0}
+  gemini-decision-1: {input: 0.10, output: 0}

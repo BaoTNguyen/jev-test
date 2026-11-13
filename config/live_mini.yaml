@@ -1,0 +1,26 @@
+# Small live check of every condition with real APIs (~40 episodes, a few dollars).
+# python -m jevbench --config config/live_mini.yaml run
+run: {seed: 13, reps: 1, max_workers: 8, max_turns: 8, budget_usd: 10}
+llms:
+  - {id: carbon, model: gemini-4-carbon, thinking_level: low}
+  - {id: hydrogen, model: gemini-4-hydrogen, thinking_level: low}
+decision_models: [none, jev, subq, gemini_decision]
+decision_providers:
+  jev: {model: typesafe/jev-1.14}
+  subq: {model: subq-snap-1.2}
+  gemini_decision: {model: gemini-decision-1}
+router: {mass: 0.95, min_k: 3, max_k: 8, escape_hatch: true, max_options: 255}
+benchmarks:
+  mcptoolbench: {enabled: true, categories: [finance, map], per_category: 1, surfaces: [native, all], judge: true}
+  medagentbench: {enabled: false, per_task_type: 1, surfaces: [native]}
+  tau: {enabled: true, domains: [airline], split: test, per_domain: 1, surfaces: [native], max_steps: 40,
+        user_llm: gemini/gemini-3.8-flash, judge_llm: gemini/gemini-3.8-flash}
+judge_llm: gemini-3.8-flash
+prices:
+  gemini-4-carbon:   {input: 2.00, output: 10.00}
+  gemini-4-hydrogen: {input: 1.50, output: 7.50}
+  gemini-3.8-flash:  {input: 0.75, output: 3.75}
+  jev-1.14.0:        {input: 0.042, output: 0}
+  typesafe/jev-1.14: {input: 0.042, output: 0}
+  subq-snap-1.2:     {input: 0.04, output: 0}
+  gemini-decision-1: {input: 0.10, output: 0}

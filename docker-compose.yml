@@ -1,0 +1,45 @@
+# One droplet runs everything:
+#   docker compose up -d                      FHIR server + dashboard (always on)
+#   docker compose run --rm runner            run the whole matrix (streams to the dashboard)
+#   docker compose run --rm runner probe      latency probe from this machine
+#   docker compose --profile localdb up -d    optional local TimescaleDB instead of Tiger Cloud
+x-app: &app
+  image: jevbench:latest
+  build: .
+  env_file: .env
+  environment:
+    FHIR_API_BASE: http://fhir:8080/fhir/
+    MEDAGENTBENCH_REFSOL: /app/refsol/refsol.py
+  volumes:
+    - ./results:/app/results
+    - ./config:/app/config:ro
+    - ./refsol:/app/refsol:ro
+
+services:
+  fhir:
+    image: jyxsu6/medagentbench:latest   # MedAgentBench HAPI FHIR server, ~2-3 GB RAM
+    restart: unless-stopped
+
+  dashboard:
+    <<: *app
+    command: ["python", "-m", "jevbench", "dashboard", "--port", "8000"]
+    ports: ["8000:8000"]
+    restart: unless-stopped
+
+  runner:
+    <<: *app
+    entrypoint: ["sh", "-c", "python -m jevbench init-db && exec python -m jevbench \"$${@:-run}\"", "--"]
+    depends_on: [fhir]
+    profiles: [run]
+
+  db:
+    image: timescale/timescaledb:latest-pg17
+    profiles: [localdb]
+    environment:
+      POSTGRES_PASSWORD: jevbench
+      POSTGRES_DB: jevbench
+    ports: ["127.0.0.1:5432:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+
+volumes:
+  pgdata:

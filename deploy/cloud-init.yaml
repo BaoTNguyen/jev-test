@@ -1,0 +1,13 @@
+#cloud-config
+# User data for the benchmark droplet (Ubuntu 24.04). Installs Docker + compose,
+# opens SSH and the dashboard port, adds 4 GB swap for the FHIR server.
+package_update: true
+packages: [git, ufw, ca-certificates, curl]
+runcmd:
+  - curl -fsSL https://get.docker.com | sh
+  - fallocate -l 4G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
+  - echo '/swapfile none swap sw 0 0' >> /etc/fstab
+  - ufw allow OpenSSH
+  - ufw allow 8000/tcp
+  - ufw --force enable
+  - echo "ready" > /root/cloud-init-done
