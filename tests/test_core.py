@@ -92,3 +92,10 @@ def test_router_skips_tiny_surfaces():
     assert not r.should_route([ToolSpec("a", "", {})])
     assert not r.should_route([ToolSpec(n, "", {}) for n in "abc"])
     assert r.should_route([ToolSpec(n, "", {}) for n in "abcd"])
+
+
+def test_router_pins_answer_tools():
+    full = [ToolSpec(n, "", {"type": "object"}) for n in ("search", "lookup", "order", "finish")]
+    r = Router(MockDecisionClient("mock"), 0.95, 1, 1)
+    names = [t.name for t in r.surface(full, ["search"], set(), {"finish"})]
+    assert "finish" in names and "search" in names and "order" not in names

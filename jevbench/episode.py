@@ -175,7 +175,7 @@ def run_tool_episode(task: ToolTask, llm: LLM, router: Router | None, rec: Recor
         with span("gen_ai.decision", f"route {rec.decision_model}"):
             r = router.route(task.route_state or task.user_text, task.tools)
         rec.on_route(r, len(task.tools))
-        current = router.surface(task.tools, r.selected, sticky)
+        current = router.surface(task.tools, r.selected, sticky, task.stop_tools)
 
     final_text, status = "", "max_turns"
     for _ in range(max_turns):
@@ -216,7 +216,7 @@ def run_tool_episode(task: ToolTask, llm: LLM, router: Router | None, rec: Recor
         conv.add_tool_results(results)
         if router is not None and current is not task.tools:
             # keep newly used tools visible on the next turn
-            current = router.surface(task.tools, [t.name for t in current], sticky)
+            current = router.surface(task.tools, [t.name for t in current], sticky, task.stop_tools)
     score, details = task.finalize(rec.calls, final_text)
     details["final_text"] = (final_text or "")[:2000]
     return score, status, details

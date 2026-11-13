@@ -33,6 +33,7 @@ def main(argv=None):
     r.add_argument("--resume", metavar="RUN_ID")
     r.add_argument("--only", help="comma list: tau,medagentbench,mcptoolbench")
     r.add_argument("--name", default="run", help="run id prefix, e.g. smoke or live")
+    r.add_argument("--workers", type=int, help="override run.max_workers (attempts in parallel)")
     r.add_argument("--no-warmup", action="store_true")
     d = sub.add_parser("dashboard")
     d.add_argument("--host", default="0.0.0.0")
@@ -69,6 +70,8 @@ def main(argv=None):
         from .runner import Runner
 
         only = set(a.only.split(",")) if a.only else None
+        if a.workers:
+            cfg["run"]["max_workers"] = a.workers
         Runner(cfg, a.resume, a.name).run(only=only, dry_run=a.dry_run, resume=bool(a.resume), warmup=not a.no_warmup)
     elif a.cmd == "dashboard":
         import uvicorn

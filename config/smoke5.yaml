@@ -19,8 +19,10 @@ benchmarks:
   tau: {enabled: true, domains: [airline, retail, telecom], split: test,
         per_domain: {airline: 2, retail: 2, telecom: 1}, surfaces: [native, pad100], max_steps: 40,
         user_llm: gemini/gemini-3.8-flash, judge_llm: gemini/gemini-3.8-flash}
-  # needs Docker (FHIR server) + refsol.py: run on the droplet
-  medagentbench: {enabled: false, per_task_type: 1, surfaces: [native, pad100]}
+  # 5 problems: patient lookup, record a vital, magnesium lab check, ortho referral order, A1C check + order.
+  # Needs the FHIR server (scripts/create_fhir_droplet.sh) and FHIR_API_BASE pointing at it; flip enabled then.
+  medagentbench: {enabled: true, per_task_type: 1, task_types: [task1, task3, task4, task8, task10],
+                  surfaces: [native, pad100]}
 judge_llm: gemini-3.8-flash
 prices:
   gemini-4-carbon:   {input: 2.00, output: 10.00}

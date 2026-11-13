@@ -85,8 +85,11 @@ class Router:
             d.choice, d.confidence, chosen,
         )
 
-    def surface(self, full: list[ToolSpec], selected: list[str], sticky: set[str]) -> list[ToolSpec]:
-        keep = set(selected) | sticky
+    def surface(self, full: list[ToolSpec], selected: list[str], sticky: set[str],
+                pinned: set[str] = frozenset()) -> list[ToolSpec]:
+        """`pinned` = the benchmark's answer/terminate tools (e.g. MedAgentBench `finish`):
+        part of the answer format, never subject to routing."""
+        keep = set(selected) | sticky | set(pinned)
         out = [t for t in full if t.name in keep]
         if self.escape_hatch:
             out.append(ESCAPE_HATCH)

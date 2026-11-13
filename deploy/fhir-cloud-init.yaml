@@ -1,0 +1,9 @@
+#cloud-config
+# MedAgentBench FHIR server only. Port 8080 is limited to allowed IPs by a DO cloud firewall
+# (scripts/create_fhir_droplet.sh). HAPI FHIR needs a few GB of RAM, hence the swap.
+package_update: true
+runcmd:
+  - curl -fsSL https://get.docker.com | sh
+  - fallocate -l 4G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
+  - echo '/swapfile none swap sw 0 0' >> /etc/fstab
+  - docker run -d --name fhir --restart unless-stopped -p 8080:8080 jyxsu6/medagentbench:latest
