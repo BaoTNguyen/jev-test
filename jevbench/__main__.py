@@ -7,6 +7,7 @@
   python -m jevbench run --resume RUN_ID    continue a stopped run
   python -m jevbench dashboard              live scoreboard on :8000
   python -m jevbench report [RUN_ID]        print the final scoreboard
+  python -m jevbench export-static RUN_ID   freeze a run into one static HTML page (docs/index.html)
 """
 
 from __future__ import annotations
@@ -40,6 +41,10 @@ def main(argv=None):
     d.add_argument("--port", type=int, default=8000)
     rp = sub.add_parser("report")
     rp.add_argument("run_id", nargs="?")
+    ex = sub.add_parser("export-static")
+    ex.add_argument("run_id")
+    ex.add_argument("--out", default=str(ROOT / "docs" / "index.html"))
+    ex.add_argument("--note", default="", help="HTML shown under the header, e.g. why the run stopped")
     a = ap.parse_args(argv)
     cfg = load_config(a.config)
 
@@ -79,6 +84,12 @@ def main(argv=None):
         from .dashboard import app
 
         uvicorn.run(app, host=a.host, port=a.port, log_level="warning")
+    elif a.cmd == "export-static":
+        from pathlib import Path
+
+        from .export import export
+
+        print(export(a.run_id, Path(a.out), a.note))
     elif a.cmd == "report":
         from .stats import summary
         from .store import list_runs, load_episodes

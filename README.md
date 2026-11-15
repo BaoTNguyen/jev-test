@@ -1,7 +1,83 @@
 # jevbench: LLM alone vs LLM + decision model
 
-Does putting a decision model in front of an agent LLM make tool use faster, cheaper or more accurate?
-One command runs every combination on three existing agent benchmarks and streams the results to a live dashboard.
+Does putting a fast decision model in front of an agent LLM make tool calls faster, cheaper or more accurate?
+jevbench runs Gemini 4 Carbon and Gemini 4 Hydrogen, each alone and with one of three decision models (Jev, SubQ Snap, Gemini Decision), on three third-party agent benchmarks. Each benchmark's own grader decides what counts as correct.
+
+**[Full results report →](https://baotnguyen.github.io/jev-test/)** It has every chart, the filters, the per-benchmark tables and all 547 task attempts from the main run.
+It is one HTML file with the run's data built in, [`docs/index.html`](docs/index.html), so you can also download it and open it in a browser (the charts load Chart.js from a CDN).
+
+## Why we built this
+
+Agents get slower and less reliable as their tool lists grow: every extra tool means more input tokens and one more way to pick wrong.
+"System 1" decision models claim to fix this by shortlisting the right tools in a fraction of a second, before the big LLM starts reasoning.
+We wanted to test that claim first on third-party benchmarks with their own graders. Later we want to build targeted benchmarks of our own, to understand the whole agentic tool-call path end to end.
+
+**What we optimize for:**
+
+- **Less token and cost bloat.** Give the LLM only the tools that are relevant to the request, so it spends its context on the task instead of a 100-tool catalogue, and stays as accurate as possible.
+- **The right call on the first try.** Help the model make the correct tool call from its very first call. This is built for physical agents and for industries where a tool call makes a real change to the outside world, such as a refund issued, an order placed or a medical record written. In those settings, a wrong call can't just be retried.
+
+## Results
+
+**Main run:** `run-20261113-132025`, Nov 13, 2026. It tested 2 Gemini models × 4 setups on τ-bench, MedAgentBench and MCPToolBench++, each with a small tool list (1–32 tools) and a large one (87–100 tools).
+The run stopped at 547 of 1,200 planned task attempts when the Gemini prepaid credits ran out. The 502 clean attempts are counted below. The other 45 hit rate limits or provider errors and are left out. All figures are medians unless noted.
+
+### Decision step (time per call, both models)
+
+- **Jev:** 0.16 s (slowest 5%: 0.42 s)
+- **SubQ Snap:** 0.39 s (slowest 5%: 0.77 s)
+- **Gemini Decision:** 0.52 s (slowest 5%: 1.07 s)
+
+All three kept the right tool in the shortlist 96–98% of the time, while cutting the list from up to 100 tools to about 3.
+
+### Gemini 4 Carbon
+
+- **Time to first correct tool call:** 8.5 s alone → 5.5 s with Jev, 6.4 s with SubQ Snap, 6.5 s with Gemini Decision
+- **Whole task (decision model + Gemini time):** 29.0 s alone → 21.3 s with Jev, 27.1 s with SubQ Snap, 24.6 s with Gemini Decision
+- **Correct:** 74% alone → 81% with Jev, 73% with SubQ Snap, 78% with Gemini Decision
+- **First tool call was the correct one:** 61% alone → 75% with Jev, 75% with SubQ Snap, 79% with Gemini Decision
+- **Cost per attempt:** $0.145 alone → $0.085 with Jev, $0.089 with SubQ Snap, $0.060 with Gemini Decision
+
+### Gemini 4 Hydrogen
+
+- **Time to first correct tool call:** 2.6 s alone → 2.5 s with Jev, 2.8 s with SubQ Snap, 3.0 s with Gemini Decision
+- **Whole task (decision model + Gemini time):** 5.6 s alone → 4.8 s with Jev, 6.0 s with SubQ Snap, 5.2 s with Gemini Decision
+- **Correct:** 79% alone → 88% with Jev, 86% with SubQ Snap, 82% with Gemini Decision
+- **First tool call was the correct one:** 75% alone → 67% with Jev, 70% with SubQ Snap, 67% with Gemini Decision (a task-mix effect: on matched tasks there was no change, see below)
+- **Cost per attempt:** $0.081 alone → $0.047 with Jev, $0.049 with SubQ Snap, $0.039 with Gemini Decision
+
+### What holds up
+
+The run stopped partway through a shuffled plan, so each setup above saw a different mix of tasks. To control for that, every attempt with a decision model was also compared with **the same task, model and tool list run alone**:
+
+- **Cost is the clear win.** On paired tasks, every decision model cut input tokens by 29–68% and cost by 35–76%, on both models.
+- **Decision models helped Carbon get the first call right, and never hurt it.** On matched tasks, no decision model turned a correct first call into a wrong one. On Carbon each one fixed 2–3 first calls (+7 to +9 points). On Hydrogen nothing changed. The counts are small, but they point the right way for the first-call goal.
+- **No decision model is clearly the most accurate.** Jev had the highest raw success rate on both models: 84% across both, against 80% for Gemini Decision, 79% for SubQ Snap and 77% alone. But the 95% intervals overlap heavily (Jev 77–89%, the others 69–86%). On matched tasks, SubQ Snap gained as much as Jev (+5 vs +4 points overall), and on Carbon Jev did slightly worse than the LLM alone (1 task fixed, 2 broken). Picking the right tool is a three-way tie too, with 96.5–97.9% shortlist recall. Hydrogen + Jev (+13 points on 23 matched tasks) is the result most worth rerunning with more repetitions.
+- **Speed barely changes.** Paired, the time to the first correct tool call moved by less than 0.6 s either way. For example, Carbon + Jev was 0.4 s faster on the same tasks, not the 3.0 s gap the medians above suggest. The decision step pays for itself through shorter prompts, but it doesn't make the agent noticeably faster.
+- **Hydrogen beats Carbon at this task.** Alone, it reached the right call about 3× sooner (2.6 s vs 8.5 s), was more accurate (79% vs 74%) and cost about half as much.
+
+<details>
+<summary>Paired comparison table</summary>
+
+| Model | Setup | Paired tasks | Correct vs alone | First call correct vs alone | First correct call vs alone | Input tokens vs alone | Cost vs alone |
+|---|---|---|---|---|---|---|---|
+| Carbon | + Jev | 29 | −3 pts | +7 pts | −0.4 s | −39% | −48% |
+| Carbon | + SubQ Snap | 31 | +3 pts | +6 pts | −0.6 s | −29% | −35% |
+| Carbon | + Gemini Decision | 32 | +3 pts | +9 pts | −0.5 s | −47% | −57% |
+| Hydrogen | + Jev | 23 | +13 pts | 0 pts | −0.1 s | −65% | −76% |
+| Hydrogen | + SubQ Snap | 27 | +7 pts | 0 pts | −0.2 s | −48% | −50% |
+| Hydrogen | + Gemini Decision | 36 | −3 pts | 0 pts | +0.4 s | −68% | −74% |
+
+Time, token and cost changes are medians over the pairs. Times count only pairs where both runs reached a correct call.
+</details>
+
+**All charts for this run** (response time over the run, results by model and tool-list size, per-benchmark bars, the full table and every attempt) are in the [full results report](https://baotnguyen.github.io/jev-test/) ([`docs/index.html`](docs/index.html)).
+
+**Limits:** one repetition per task, a run that stopped partway, and no confidence intervals yet. τ-bench conversations are long-tailed (Carbon's first correct call took anywhere from 7 s to 230 s), so the τ-bench cells on the results page swing a lot.
+
+**Earlier smoke run:** a complete but smaller run of 240 attempts (5 problems per benchmark), in [SMOKE_RESULTS.md](SMOKE_RESULTS.md). Jev was again the fastest decision step (145 ms) and again had the highest raw success rate on both models (83% vs 80% alone on Carbon, 93% vs 87% on Hydrogen). That is within the error bars again: across 60 matched tasks it fixed 3 and broke none.
+
+## What's being tested
 
 |  | LLM alone | + Jev | + SubQ Snap | + Gemini Decision |
 |---|---|---|---|---|
@@ -10,47 +86,13 @@ One command runs every combination on three existing agent benchmarks and stream
 
 Each cell runs on:
 
-| Benchmark | Industry | What gets scored | Small vs large tool surface |
+| Benchmark | Industry | What gets scored | Small vs large tool list |
 |---|---|---|---|
 | [τ-bench](https://github.com/sierra-research/tau2-bench) (Sierra) | airline, retail, telecom customer service | τ's own reward (final DB state and facts communicated), simulated user | domain tools (13–16) vs 100 |
 | [MedAgentBench](https://github.com/stanfordmlgroup/MedAgentBench) (Stanford) | healthcare (FHIR EHR) | Stanford's `refsol.py` grader | 9 FHIR tools + finish vs 100 |
 | [MCPToolBench++](https://github.com/mcp-tool-bench/MCPToolBenchPP) | browser, files, search, maps, finance, payments | the benchmark's AST check (exact match, then its LLM-judge prompt) | the item's own tools vs all 87 |
 
-## Why we built this
-
-Agents get slower and less reliable as their tool lists grow: every extra tool is more input tokens and one more way to pick wrong.
-"System 1" decision models (Jev, SubQ Snap) claim to fix this by shortlisting the right tools in milliseconds, before the big LLM starts reasoning.
-We wanted to test that claim on third-party benchmarks with their own graders, not on a demo we wrote ourselves.
-
-**What we optimize for:** the wait a user actually feels. That is the time until the agent takes the *right* action (`ttfctc_s`, below), without losing accuracy to get it.
-A decision model only counts as a win if its own latency is paid back by a faster or more accurate agent.
-
-## Results
-
-Numbers below are from one finished run: 240 task attempts (5 problems × 3 benchmarks × 2 tool lists × 2 Gemini models × 4 setups), medians, 30 attempts per model/setup cell. Full tables in [SMOKE_RESULTS.md](SMOKE_RESULTS.md).
-It is a small sample: treat gaps of a few points as noise, and the larger gaps below as the signal.
-
-![Results by model: correct %, first tool call, first correct tool call and total task time for every setup](docs/img/results-by-model.png)
-
-| Setup (both models, both tool lists) | Correct | Decision model time (p50) | First correct tool call (p50 / p95) |
-|---|---|---|---|
-| LLM alone | 83% | n/a | 4.6 s / 41.9 s |
-| + **Jev** | **88%** | **145 ms** | **4.3 s** / 32.2 s |
-| + SubQ Snap | 83% | 469 ms | 5.0 s / 33.8 s |
-| + Gemini Decision | 82% | 437 ms | 4.6 s / **29.4 s** |
-
-- **Jev is the quickest decision model and the most accurate setup.** Its decision step takes about a third of the time of SubQ or Gemini Decision, and it is the only setup that clearly beats the LLM alone on correctness (+5 pts overall, +7 on Hydrogen).
-- **Jev's gain shows up in the tail.** The median time to the first correct call barely moves, but τ-bench on Carbon drops from 13.0 s to 9.3 s, and p95 drops by about 10 s.
-- **Gemini Decision cuts the tail but not the error rate.** It has the best p95, yet its accuracy matches or trails the LLM alone (80% vs 80% on Carbon, 83% vs 87% on Hydrogen).
-- **Carbon is the slower model.** Alone, its first correct call takes 8.3 s against 2.6 s for Hydrogen, and a whole task takes 24.8 s against 7.6 s, with 80% vs 87% correct.
-- **All three decision models kept the right tool in the shortlist about 97% of the time** while cutting the list to roughly 3 to 8 tools.
-
-![Correct %, time to first correct tool call and time to first tool call by benchmark and model](docs/img/charts.png)
-
-Every decision model is compared against the same task, model and tool list run without one, so a setup can't look fast by failing early.
-The live dashboard (`python -m jevbench dashboard`) renders these same views and updates while a run is in progress.
-
-## How a "+ decision model" episode works
+### How a "+ decision model" episode works
 
 ```
 user request ─► decision model: one `choice` question over every tool ──► probabilities
@@ -63,7 +105,7 @@ Everything except the decision model stays fixed: prompt, tools, thinking level,
 On τ-bench the decision model runs again on every new user message.
 Jev, SubQ and Gemini Decision get identical questions and the same shortlist rule (`jevbench/router.py`).
 
-## Time to first tool call vs time to first *correct* tool call
+### Time to first tool call vs time to first *correct* tool call
 
 Both are measured on the **agent clock**, which runs only while the decision model or the agent LLM is working. Tool execution, the τ user simulator and the judges are excluded, so every setup is timed the same way.
 
@@ -73,12 +115,40 @@ Both are measured on the **agent clock**, which runs only while the decision mod
 | Tells you | how fast the agent commits to an action | how long a user waits for the right action |
 | Weakness | a fast wrong call looks good | none: a wrong call keeps the clock running |
 
-Episodes keep going after a wrong call until a correct one lands (or the step limit hits), so `ttfctc_s` includes the cost of every wasted call. That is why it is the metric we optimize: a decision model that shaves the first call but sends the agent down a wrong path scores worse, not better.
+Episodes keep going after a wrong call until a correct one lands (or the step limit hits), so `ttfctc_s` includes the cost of every wasted call. That makes it the main speed metric here: a decision model that shaves the first call but sends the agent down a wrong path scores worse, not better.
 A "+ decision model" episode's clock includes the decision call, so its overhead is charged against it. Each provider gets one discarded warm-up call first, and `python -m jevbench probe` measures the network floor so decision overhead can be read net of latency.
 
-## Metrics (per episode, then p50/p95 per cell)
+What counts as a "correct call":
 
-The **agent clock** only runs while the decision model or the agent LLM is working. Tool execution, the τ user simulator and judges are left out.
+- **τ:** matches one of the task's expected actions, using τ's own `compare_with_tool_call`.
+- **MCPToolBench++:** matches the labelled call (or one of its `similar_tools`).
+- **MedAgentBench** has no per-call key, so `EXPECTED` in `jevbench/benches/medagentbench.py` is our annotation of the first call each task type needs. Task success still comes only from `refsol.py`.
+
+## What the numbers mean
+
+A guide to every term on the [results page](https://baotnguyen.github.io/jev-test/).
+
+| Term | Meaning |
+|---|---|
+| Task attempt | One benchmark problem, tried once by one setup. Example: "Gemini Carbon + Jev handles one airline customer request." |
+| LLM alone | Gemini gets the whole tool list and decides by itself which tool to use. |
+| + Jev / + SubQ Snap / + Gemini Decision | A fast decision model reads the request first and picks the 3–8 most likely tools, with a "give me more tools" escape hatch. Gemini then sees only those. Everything else stays the same. |
+| Small / large tool list | Small = only the tools that belong to the problem (1–32). Large = padded with tools from other apps (87–100), the way a real assistant connected to many services looks. |
+| Correct | The benchmark's own grader says the job was done right. τ-bench checks the final database and what the customer was told, MCPToolBench++ checks the tool call against its answer key, and MedAgentBench uses Stanford's `refsol.py`. |
+| Time to first tool call | How long until the agent takes its first action, right or wrong. |
+| Time to first correct tool call | How long until it takes the right action. This is the wait a user actually feels. |
+| Slowest 5% | The 95th percentile: the tail a user sometimes hits. |
+| Total task time | All the AI's thinking time for the task (decision model + Gemini). Tool execution and the simulated customer's replies are not counted, so every setup is timed the same way. |
+| vs alone | The same problem, model and tool list run without a decision model. Times count only pairs where both reached a correct call, so a setup can't look fast by failing early. The bracketed numbers on the result tiles compare whole groups and are not paired. |
+| Decision model time | How long one decision-model call took (the median per call). |
+| Gemini first byte | Time until Gemini streamed its first chunk of a reply. |
+| Wrong calls first | Average number of tool calls the agent made before its first correct one. |
+| Right tool shortlisted | How often the decision model's shortlist contained the tool the answer key needed. |
+| Tools shortlisted / asked for more tools | Average shortlist size, and how often the agent used the escape hatch to see the full list. |
+| Errors / excluded | Attempts that crashed or hit a provider error such as a 429 rate limit. They measure the account's quota, not the models, so they are left out of every number. |
+| Response time charts | The average time each provider took to answer one call, minute by minute during the run. The jump of about 30 minutes in the time axis is where the run paused and was resumed. Times are in your local time zone. |
+
+## Metrics: field reference (per episode, then p50/p95 per cell)
 
 | Metric | Meaning |
 |---|---|
@@ -90,14 +160,6 @@ The **agent clock** only runs while the decision model or the agent LLM is worki
 | `calls_before_correct`, `wrong_calls`, `distractor_calls` | wasted calls |
 | `shortlist_recall`, `avg_shortlist_size`, `hatch_used` | whether the decision model kept the right tool |
 | tokens, `cost_usd` | input/output/cached tokens and USD (prices in `config/matrix.yaml`) |
-
-The dashboard's Δ columns compare each decision model with **the same task / LLM / surface / rep run without one**, over pairs where both made a correct call. A condition can't look fast just by failing early.
-
-What counts as a "correct call":
-
-- **τ:** matches one of the task's expected actions, using τ's own `compare_with_tool_call`.
-- **MCPToolBench++:** matches the labelled call (or one of its `similar_tools`).
-- **MedAgentBench** has no per-call key, so `EXPECTED` in `jevbench/benches/medagentbench.py` is our annotation of the first call each task type needs. Task success still comes only from `refsol.py`.
 
 ## Hosting: everything on one DigitalOcean droplet
 
@@ -172,6 +234,7 @@ uv run --no-sync pytest -q                                                      
 uv run --no-sync python -m jevbench --config config/smoke.yaml run --no-warmup    # offline smoke run (mock LLM + mock router)
 uv run --no-sync python -m jevbench --config config/live_mini.yaml run            # 40 real episodes, ~$1, every condition
 uv run --no-sync python -m jevbench dashboard                                     # http://localhost:8000
+uv run --no-sync python -m jevbench export-static <run_id> --note '...'           # freeze a run into docs/index.html (reads results/<run_id>/, not the database)
 ```
 
 ## Size, time and cost
@@ -204,7 +267,9 @@ jevbench/episode.py         agent clock + metrics recorder, generic tool loop
 jevbench/benches/           tau.py, medagentbench.py, mcptoolbench.py adapters
 jevbench/runner.py          plans and runs the whole matrix concurrently; budget guard, hard stop, resume
 jevbench/store.py, schema.sql   JSONL + Tiger Data (hypertable `events`, continuous aggregate `call_latency_1m`)
-jevbench/dashboard.py, static/index.html   live scoreboard
+jevbench/dashboard.py, static/index.html   live scoreboard (same page renders the static snapshot)
+jevbench/export.py          export-static: one run -> docs/index.html with the data embedded
+docs/                       the published results page (GitHub Pages)
 jevbench/probe.py           network floor + warm-call latency per provider
 scripts/, deploy/           benchmark setup, droplet creation, cloud-init, App Platform spec
 ```

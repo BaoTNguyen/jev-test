@@ -65,10 +65,12 @@
   th, td { padding: 6px 8px; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap; }
   th.l, td.l { text-align: left; }
   th { color: var(--ink-2); font-weight: 600; position: sticky; top: 0; background: var(--panel); }
-  .explain td { white-space: normal; text-align: left; vertical-align: top; }
-  .explain td:first-child { font-weight: 600; width: 220px; }
   .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--c); margin-right: 6px; }
   .empty { color: var(--muted); padding: 40px; text-align: center; }
+  /* Snapshot mode (python -m jevbench export-static): no polling, no run picker, no glossary. */
+  .snapshot .live-only { display: none !important; }
+  .snapnote { margin: 6px 0 0; font-size: 13px; color: var(--ink-2); max-width: 900px; }
+  .snapnote a { color: inherit; }
   @media (max-width: 760px) {
     header, main { padding-left: 16px; padding-right: 16px; }
     .grid2, .grid3 { grid-template-columns: 1fr; }
@@ -82,27 +84,28 @@
   <div>
     <h1>Does a decision model make an AI agent faster and more accurate?</h1>
     <div class="sub">Gemini 4 Carbon and Gemini 4 Hydrogen, alone vs. with Jev, SubQ Snap or Gemini Decision picking their tools first</div>
+    <p id="snapNote" class="snapnote" hidden></p>
   </div>
   <div class="progress">
     <div class="bar"><div id="pbar"></div></div>
     <span id="ptext" class="sub" style="font-variant-numeric: tabular-nums">–</span>
   </div>
-  <label class="sub">run <select id="run"></select></label>
+  <label class="sub live-only">run <select id="run"></select></label>
 </header>
 <main>
   <div id="empty" class="empty" hidden>No runs yet. Start one with <code>python -m jevbench run</code>.</div>
 
   <section class="grid2">
-    <div class="panel"><h2>Decision model response time, live (avg seconds per minute)</h2><canvas id="chDec"></canvas></div>
-    <div class="panel"><h2>Gemini response time, live (avg seconds per minute)</h2><canvas id="chLlm"></canvas></div>
+    <div class="panel"><h2 data-snap="Decision model response time during the run (avg seconds per minute)">Decision model response time, live (avg seconds per minute)</h2><canvas id="chDec"></canvas></div>
+    <div class="panel"><h2 data-snap="Gemini response time during the run (avg seconds per minute)">Gemini response time, live (avg seconds per minute)</h2><canvas id="chLlm"></canvas></div>
   </section>
-  <p class="note" id="seriesNote">Live latency comes from Tiger Data (TimescaleDB continuous aggregate) and appears once a run is going.</p>
+  <p class="note" id="seriesNote" data-snap="Per-minute averages computed from the run's event log.">Live latency comes from Tiger Data (TimescaleDB continuous aggregate) and appears once a run is going.</p>
 
   <section>
     <div class="toolbar">
       <h2 style="margin:0">Results by model</h2>
       <label class="sub">tool list <select id="fSurf">
-        <option value="all">both sizes</option><option value="small">small (13–32 tools)</option><option value="large">large (~55–100 tools)</option>
+        <option value="all">both sizes</option><option value="small">small (1–32 tools)</option><option value="large">large (87–100 tools)</option>
       </select></label>
       <span class="sub">Bracketed numbers compare with the same Gemini model alone. Green = better.</span>
     </div>
@@ -116,21 +119,6 @@
   </section>
 
   <section class="panel">
-    <h2>What the numbers mean</h2>
-    <table class="explain"><tbody>
-      <tr><td>Task attempt</td><td>One benchmark problem, tried once by one setup. Example: "Gemini Carbon + Jev handles one airline customer request."</td></tr>
-      <tr><td>LLM alone</td><td>Gemini gets the whole tool list and decides by itself which tool to use.</td></tr>
-      <tr><td>+ Jev / + SubQ Snap / + Gemini Decision</td><td>A fast "decision model" reads the request first and picks the 3–8 most likely tools (with a "give me more tools" escape hatch). Gemini then only sees those. Everything else stays the same.</td></tr>
-      <tr><td>Small / large tool list</td><td>Small = only the tools that belong to the problem (13–32). Large = padded with tools from other apps (~55–100), the way a real assistant connected to many services looks.</td></tr>
-      <tr><td>Correct</td><td>The benchmark's own grader says the job was done right: τ-bench checks the final database and what the customer was told; MCPToolBench++ checks the tool call against the answer key.</td></tr>
-      <tr><td>Time to first tool call</td><td>How long until the AI takes its first action, right or wrong.</td></tr>
-      <tr><td>Time to first correct tool call</td><td>How long until it takes the right action. This is the wait a user actually feels.</td></tr>
-      <tr><td>Total task time</td><td>All the AI's thinking time for the task (decision model + Gemini). Tool execution and the simulated customer's replies are not counted, so every setup is timed the same way.</td></tr>
-      <tr><td>Live response time charts</td><td>Average time each provider took to answer one call, minute by minute, stored in Tiger Data.</td></tr>
-    </tbody></table>
-  </section>
-
-  <section class="panel">
     <h2>Full results table</h2>
     <div class="toolbar">
       <select id="fBench"><option value="">all benchmarks</option></select>
@@ -141,7 +129,7 @@
   </section>
 
   <section class="panel">
-    <h2>Latest task attempts</h2>
+    <h2 data-snap="Every task attempt in this run, oldest first">Latest task attempts</h2>
     <div style="max-height:360px;overflow:auto"><table id="recent"></table></div>
   </section>
 </main>
@@ -157,8 +145,19 @@ const PCOLOR = {"Jev": "--c-jev", "SubQ Snap": "--c-subq", "Gemini Decision": "-
 const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 const color = d => css(`--c-${d}`) || "#888";
 const sec = v => v == null ? "–" : v.toFixed(1) + " s";
+// Server timestamps are UTC ("2026-11-13 22:20:00+00:00"); show them in the viewer's local time.
+const localTime = ts => {
+  const d = new Date(String(ts).replace(" ", "T"));
+  return isNaN(d) ? String(ts).slice(11, 16) : d.toLocaleTimeString([], {hour: "numeric", minute: "2-digit"});
+};
 const pct = v => v == null ? "–" : Math.round(100 * v) + "%";
 const charts = {};
+const SNAP = window.SNAPSHOT || null;   // set by export-static: render once from embedded data
+if (SNAP) {
+  document.documentElement.classList.add("snapshot");
+  document.querySelectorAll("[data-snap]").forEach(e => { e.textContent = e.dataset.snap; });
+  if (window.SNAPSHOT_NOTE) { const n = document.getElementById("snapNote"); n.innerHTML = window.SNAPSHOT_NOTE; n.hidden = false; }
+}
 let selectedRun = new URLSearchParams(location.search).get("run") || "";
 let last = null;
 
@@ -214,7 +213,7 @@ function bars(id, view, key, fmt, max) {
 function lines(id, pts) {
   const series = [...new Set(pts.map(p => PROVIDER[p.provider] || p.provider))];
   const labels = [...new Set(pts.map(p => p.bucket))].sort();
-  const data = {labels: labels.map(l => l.slice(11, 16)), datasets: series.map(s => ({
+  const data = {labels: labels.map(localTime), datasets: series.map(s => ({
     label: s, borderColor: css(PCOLOR[s] || "--muted"), backgroundColor: css(PCOLOR[s] || "--muted"),
     borderWidth: 2, pointRadius: 4, pointHoverRadius: 6, spanGaps: true, tension: 0.2,
     data: labels.map(l => { const xs = pts.filter(p => p.bucket === l && (PROVIDER[p.provider] || p.provider) === s);
@@ -253,9 +252,11 @@ function table(s) {
 }
 
 function recent(s) {
+  const fb = document.getElementById("fBench").value, fl = document.getElementById("fLlm").value;
+  const rows = s.recent.filter(r => (!fb || r.bench === fb) && (!fl || r.llm === fl));
   document.getElementById("recent").innerHTML =
     `<tr><th class="l">benchmark</th><th class="l">problem</th><th class="l">model</th><th class="l">setup</th><th class="l">tool list</th><th>correct</th><th>first tool call</th><th>first correct call</th><th>total task time</th></tr>` +
-    s.recent.map(r => `<tr><td class="l">${BENCH[r.bench] || r.bench}</td><td class="l">${(r.task_id || "").slice(0, 24)}</td>
+    rows.map(r => `<tr><td class="l">${BENCH[r.bench] || r.bench}</td><td class="l">${(r.task_id || "").slice(0, 24)}</td>
       <td class="l">${MODEL[r.llm] || r.llm}</td><td class="l"><span class="dot" style="--c:${color(r.decision)}"></span>${SETUP[r.decision] || r.decision}</td>
       <td class="l">${SURF(r.surface)}</td>
       <td>${r.error ? '<span class="down">error</span>' : r.score == null ? "–" : r.score >= 0.999 ? "yes" : "no"}</td>
@@ -273,8 +274,7 @@ function render(s) {
 
 async function tick() {
   try {
-    const r = await fetch(`api/summary${selectedRun ? `?run=${encodeURIComponent(selectedRun)}` : ""}`);
-    const s = await r.json();
+    const s = SNAP || await (await fetch(`api/summary${selectedRun ? `?run=${encodeURIComponent(selectedRun)}` : ""}`)).json();
     last = s;
     document.getElementById("empty").hidden = !!s.run;
     if (!s.run) return;
@@ -282,8 +282,9 @@ async function tick() {
       `<option value="${x.run_id}" ${x.run_id === s.run ? "selected" : ""}>${x.run_id}${x.state ? " · " + x.state.split(":")[0] : ""}</option>`).join("");
     const done = s.planned ? Math.min(100, 100 * s.done / s.planned) : 0;
     document.getElementById("pbar").style.width = done + "%";
-    document.getElementById("ptext").textContent =
-      `${s.done}${s.planned ? " / " + s.planned : ""} task attempts${s.errors ? ` · ${s.errors} errors` : ""}${s.state ? " · " + s.state.split(":")[0] : ""}`;
+    document.getElementById("ptext").textContent = SNAP
+      ? `${s.done.toLocaleString("en-US")} clean of ${(s.planned || s.done).toLocaleString("en-US")} planned task attempts${s.errors ? ` · ${s.errors} excluded (errors / rate limits)` : ""}${s.state ? " · " + s.state.split(":")[0] : ""}`
+      : `${s.done}${s.planned ? " / " + s.planned : ""} task attempts${s.errors ? ` · ${s.errors} errors` : ""}${s.state ? " · " + s.state.split(":")[0] : ""}`;
     const pts = s.latency_series || [];
     document.getElementById("seriesNote").hidden = pts.length > 0;
     lines("chDec", pts.filter(p => p.kind === "decision"));
@@ -297,7 +298,7 @@ document.getElementById("run").addEventListener("change", e => { selectedRun = e
 ["fSurf", "fBench", "fLlm"].forEach(id => document.getElementById(id).addEventListener("change", () => last && render(last)));
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { axisColors(); Object.values(charts).forEach(c => c.destroy()); for (const k in charts) delete charts[k]; last && tick(); });
 tick();
-setInterval(tick, 3000);
+if (!SNAP) setInterval(tick, 3000);
 </script>
 </body>
 </html>

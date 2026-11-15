@@ -8,3 +8,7 @@ results/
 *.egg-info/
 .DS_Store
 refsol/
+
+# hackathon-only notes, kept locally
+SUBMISSION.md
+SCRIPT.md
