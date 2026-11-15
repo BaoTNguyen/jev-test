@@ -16,6 +16,40 @@ Each cell runs on:
 | [MedAgentBench](https://github.com/stanfordmlgroup/MedAgentBench) (Stanford) | healthcare (FHIR EHR) | Stanford's `refsol.py` grader | 9 FHIR tools + finish vs 100 |
 | [MCPToolBench++](https://github.com/mcp-tool-bench/MCPToolBenchPP) | browser, files, search, maps, finance, payments | the benchmark's AST check (exact match, then its LLM-judge prompt) | the item's own tools vs all 87 |
 
+## Why we built this
+
+Agents get slower and less reliable as their tool lists grow: every extra tool is more input tokens and one more way to pick wrong.
+"System 1" decision models (Jev, SubQ Snap) claim to fix this by shortlisting the right tools in milliseconds, before the big LLM starts reasoning.
+We wanted to test that claim on third-party benchmarks with their own graders, not on a demo we wrote ourselves.
+
+**What we optimize for:** the wait a user actually feels. That is the time until the agent takes the *right* action (`ttfctc_s`, below), without losing accuracy to get it.
+A decision model only counts as a win if its own latency is paid back by a faster or more accurate agent.
+
+## Results
+
+Numbers below are from one finished run: 240 task attempts (5 problems × 3 benchmarks × 2 tool lists × 2 Gemini models × 4 setups), medians, 30 attempts per model/setup cell. Full tables in [SMOKE_RESULTS.md](SMOKE_RESULTS.md).
+It is a small sample: treat gaps of a few points as noise, and the larger gaps below as the signal.
+
+![Results by model: correct %, first tool call, first correct tool call and total task time for every setup](docs/img/results-by-model.png)
+
+| Setup (both models, both tool lists) | Correct | Decision model time (p50) | First correct tool call (p50 / p95) |
+|---|---|---|---|
+| LLM alone | 83% | n/a | 4.6 s / 41.9 s |
+| + **Jev** | **88%** | **145 ms** | **4.3 s** / 32.2 s |
+| + SubQ Snap | 83% | 469 ms | 5.0 s / 33.8 s |
+| + Gemini Decision | 82% | 437 ms | 4.6 s / **29.4 s** |
+
+- **Jev is the quickest decision model and the most accurate setup.** Its decision step takes about a third of the time of SubQ or Gemini Decision, and it is the only setup that clearly beats the LLM alone on correctness (+5 pts overall, +7 on Hydrogen).
+- **Jev's gain shows up in the tail.** The median time to the first correct call barely moves, but τ-bench on Carbon drops from 13.0 s to 9.3 s, and p95 drops by about 10 s.
+- **Gemini Decision cuts the tail but not the error rate.** It has the best p95, yet its accuracy matches or trails the LLM alone (80% vs 80% on Carbon, 83% vs 87% on Hydrogen).
+- **Carbon is the slower model.** Alone, its first correct call takes 8.3 s against 2.6 s for Hydrogen, and a whole task takes 24.8 s against 7.6 s, with 80% vs 87% correct.
+- **All three decision models kept the right tool in the shortlist about 97% of the time** while cutting the list to roughly 3 to 8 tools.
+
+![Correct %, time to first correct tool call and time to first tool call by benchmark and model](docs/img/charts.png)
+
+Every decision model is compared against the same task, model and tool list run without one, so a setup can't look fast by failing early.
+The live dashboard (`python -m jevbench dashboard`) renders these same views and updates while a run is in progress.
+
 ## How a "+ decision model" episode works
 
 ```
@@ -28,6 +62,19 @@ user request ─► decision model: one `choice` question over every tool ──
 Everything except the decision model stays fixed: prompt, tools, thinking level, user simulator, judges, step limits.
 On τ-bench the decision model runs again on every new user message.
 Jev, SubQ and Gemini Decision get identical questions and the same shortlist rule (`jevbench/router.py`).
+
+## Time to first tool call vs time to first *correct* tool call
+
+Both are measured on the **agent clock**, which runs only while the decision model or the agent LLM is working. Tool execution, the τ user simulator and the judges are excluded, so every setup is timed the same way.
+
+| | `ttftc_s` (time to first tool call) | `ttfctc_s` (time to first *correct* tool call) |
+|---|---|---|
+| Stops when | the first function-call chunk streams in from Gemini, right or wrong | the first call the benchmark's answer key accepts |
+| Tells you | how fast the agent commits to an action | how long a user waits for the right action |
+| Weakness | a fast wrong call looks good | none: a wrong call keeps the clock running |
+
+Episodes keep going after a wrong call until a correct one lands (or the step limit hits), so `ttfctc_s` includes the cost of every wasted call. That is why it is the metric we optimize: a decision model that shaves the first call but sends the agent down a wrong path scores worse, not better.
+A "+ decision model" episode's clock includes the decision call, so its overhead is charged against it. Each provider gets one discarded warm-up call first, and `python -m jevbench probe` measures the network floor so decision overhead can be read net of latency.
 
 ## Metrics (per episode, then p50/p95 per cell)
 
